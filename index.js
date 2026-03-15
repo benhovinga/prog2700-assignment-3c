@@ -68,7 +68,6 @@ class OpenSkyNetwork {
     #ROOT_URL = "https://opensky-network.org/api"
 
     async #fetchJSON(url) {
-        console.debug(`Making fetch request to URL: ${url}`);
         const response = await fetch(url);
         if (!response.ok)
             throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
@@ -116,21 +115,13 @@ class OpenSkyNetwork {
 /**
  * Main Program
  */
-async function main() {
-
-    // Goal 1: Display a map in the browser.
-
+function main() {
     // Center map on Halifax Stanfield International Airport (YHZ)
     const MAP_CENTER = new LatLong(44.87862, -63.50965);
 
     // Bounding box around most of mainland Nova Scotia, Canada.
     const MIN_BOUND = new LatLong(MAP_CENTER.lat - 1.5, MAP_CENTER.long - 2.5);
     const MAX_BOUND = new LatLong(MAP_CENTER.lat + 1, MAP_CENTER.long + 2.5);
-
-    // Debug
-    console.debug(`MAP_CENTER=${MAP_CENTER}`);
-    console.debug(`MIN_BOUND=${MIN_BOUND}`);
-    console.debug(`MAX_BOUND=${MAX_BOUND}`);
 
     // Initialize the map
     const map = L.map('map', {
@@ -142,13 +133,13 @@ async function main() {
     // Add the scale bar to the map
     L.control.scale().addTo(map);
 
-    // Use OSM Tiles
+    // Use OSM tiles
     const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(map);
 
-    // Flight data bounding box
+    // Flight data bounding box layer
     const flightDataBoundBox = L.rectangle(
         [
             MIN_BOUND.toArray(),
@@ -168,49 +159,7 @@ async function main() {
         .bindPopup("<strong>Halifax Stanfield International Airport</strong><br/>ICAO: CYHZ<br/>IATA: YHZ")
         .addTo(map);
 
-    // Add layer controls
-    const layerControl = L.control.layers(
-        // Base maps
-        {
-            "OpenStreetMap": osm
-        },
-        // Overlay maps
-        {
-            "Airport marker": hfxAirportMarker,
-            "Flight data bounding box": flightDataBoundBox
-        }).addTo(map);
-
-    // Ideas to improve the map in the future
-    // -   IDEA: Add pilot overlays to map
-    // -   IDEA: Add drone overlays to map
-
-    // Goal 2: Fetch real-time transit data information data from a publicly available API.
-    const osn = new OpenSkyNetwork(MIN_BOUND, MAX_BOUND);
-    const {time, states} = await osn.fetchAllStateVectors();
-    console.log(`Fetched ${states.length} states.`);
-
-
-    // Goal 3: Filter the raw data to a subset with specific criteria.
-    // const canadianOrigin = states.filter(state => state.originCountry === "Canada");
-    const canadianOrigin = states.filter(state => state);
-    console.log(`Reduced to ${canadianOrigin.length} states.`);
-    console.log(canadianOrigin);
-
-    // Goal 4: Convert the filtered API data into GeoJSON format.
-    const geojsonFeatures = canadianOrigin.map(state => {
-        return {
-            "type": "Feature",
-            "properties": state,
-            "geometry": {
-                "type": "Point",
-                "coordinates": [state.longitude, state.latitude]
-            }
-        };
-    });
-    console.debug(geojsonFeatures);
-
-    // Goal 5: Plot markers on the map to display the current position of vehicles.
-
+    // Plane popup info
     function getPlaneInfo(plane) {
         let output = "";
         output += `<h4>${plane.callsign || "unknown"}</h4>`;
@@ -222,16 +171,16 @@ async function main() {
         return output;
     }
 
+    // Plane icon
     const planeIcon = L.icon({
         iconUrl: "plane2.png",
         iconSize: [40, 40],
         iconAnchor: [20, 20],
     })
 
-    L.geoJSON(geojsonFeatures, {
+    // GeoJSON layer
+    const planeLayer = L.geoJSON(null, {
         pointToLayer: function (feature, latlng) {
-            console.log(feature)
-            console.log(latlng)
             return L.marker(latlng, {
                 icon: planeIcon,
                 rotationAngle: feature.properties.trueTrack,
@@ -242,8 +191,50 @@ async function main() {
         }
     }).addTo(map);
 
-    // TODO: Goal 6: Add functionality that will cause the map to auto refresh after a certain interval of time.
+    // Add layer controls
+    const layerControl = L.control.layers(
+        // Base maps
+        {
+            "OpenStreetMap": osm
+        },
+        // Overlay maps
+        {
+            "Airport marker": hfxAirportMarker,
+            "Flight data bounding box": flightDataBoundBox,
+            "Planes": planeLayer
+        }
+    ).addTo(map);
 
+    // Initialize the OSN API
+    const osn = new OpenSkyNetwork(MIN_BOUND, MAX_BOUND);
+
+    // Runner to fetch fresh data and display on the map
+    async function runner() {
+        // Fetch
+        const {time, states} = await osn.fetchAllStateVectors();
+        // Filter
+        const canadianOrigin = states.filter(state => state.originCountry === "Canada");
+        // Convert to GeoJSON
+        const geojsonFeatures = canadianOrigin.map(state => {
+            return {
+                "type": "Feature",
+                "properties": state,
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [state.longitude, state.latitude]
+                }
+            };
+        });
+        // Clear pervious planes
+        planeLayer.clearLayers();
+        // Add new planes
+        planeLayer.addData(geojsonFeatures);
+    }
+
+    // Kickstart the runner
+    runner();
+    // Repeat runner every 15 seconds
+    setInterval(runner, 1000 * 15);
 }
 
 // Start the main program when the DOM is ready
