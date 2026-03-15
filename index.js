@@ -51,7 +51,6 @@ class LatLong {
     }
 }
 
-
 class OpenSkyNetwork {
     minBound;
     maxBound;
@@ -69,26 +68,50 @@ class OpenSkyNetwork {
     #ROOT_URL = "https://opensky-network.org/api"
 
     async #fetchJSON(url) {
+        console.debug(`Making fetch request to URL: ${url}`);
         const response = await fetch(url);
         if (!response.ok)
             throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
         return await response.json();
     }
 
-    #getBoundingParams() {
+    #getBoundingBoxURLParams() {
         if (this.minBound && this.maxBound)
-            return `lamin=${this.minBound.lat}&lomin=${this.minBound.long}&lamax=${this.maxBound.lat}&lomax${this.maxBound.long}`;
+            return `lamin=${this.minBound.lat}&lomin=${this.minBound.long}&lamax=${this.maxBound.lat}&lomax=${this.maxBound.long}`;
         else
             return "";
     }
 
     async fetchAllStateVectors() {
-        const url = `${this.#ROOT_URL}/states/all?${this.#getBoundingParams()}`;
-        const json = await this.#fetchJSON(url);
-        return json;
+        const url = `${this.#ROOT_URL}/states/all?${this.#getBoundingBoxURLParams()}`;
+        const {time, states} = await this.#fetchJSON(url);
+        return {
+            time,
+            states: Array(...states).map(vectors => {
+                return {
+                    icao24: String(vectors[0]),
+                    callsign: String(vectors[1]),
+                    originCountry: String(vectors[2]),
+                    timePosition: Number(vectors[3]),
+                    lastContact: Number(vectors[4]),
+                    longitude: Number(vectors[5]),
+                    latitude: Number(vectors[6]),
+                    baroAltitude: (vectors[7]),
+                    onGround: Boolean(vectors[8]),
+                    velocity: Number(vectors[9]),
+                    trueTrack: Number(vectors[10]),
+                    verticalRate: Number(vectors[11]),
+                    sensors: vectors[12] ? Array(vectors[12]).map(i => Number(i)) : null,
+                    geoAltitude: Number(vectors[13]),
+                    squawk: String(vectors[14]),
+                    spi: Boolean(vectors[15]),
+                    positionSource: Number(vectors[16]),
+                    category: vectors[17] ? Number(vectors[17]) : null,
+                }
+            }),
+        };
     }
 }
-
 
 /**
  * Main Program
@@ -97,16 +120,23 @@ async function main() {
 
     // Goal 1: Display a map in the browser.
 
-    // Define map center and data collection bounding box
+    // Center map on Halifax Stanfield International Airport (YHZ)
     const MAP_CENTER = new LatLong(44.87862, -63.50965);
-    const MIN_BOUND = new LatLong(MAP_CENTER.lat - 2, MAP_CENTER.long - 3);
-    const MAX_BOUND = new LatLong(MAP_CENTER.lat + 2, MAP_CENTER.long + 3);
+
+    // Bounding box around most of mainland Nova Scotia, Canada.
+    const MIN_BOUND = new LatLong(MAP_CENTER.lat - 1.5, MAP_CENTER.long - 2.5);
+    const MAX_BOUND = new LatLong(MAP_CENTER.lat + 1, MAP_CENTER.long + 2.5);
+
+    // Debug
+    console.debug(`MAP_CENTER=${MAP_CENTER}`);
+    console.debug(`MIN_BOUND=${MIN_BOUND}`);
+    console.debug(`MAX_BOUND=${MAX_BOUND}`);
 
     // Initialize the map
-    // See https://leafletjs.com/reference.html#map-option for options
     const map = L.map('map', {
+        // See https://leafletjs.com/reference.html#map-option for more options
         center: MAP_CENTER.toArray(),
-        zoom: 10,
+        zoom: 8,
     });
 
     // Add the scale bar to the map
@@ -154,24 +184,63 @@ async function main() {
     // -   IDEA: Add pilot overlays to map
     // -   IDEA: Add drone overlays to map
 
-    // TODO: Goal 2: Fetch real-time transit data information data from a publicly available API. (Flight data)
-    // API Docs: https://openskynetwork.github.io/opensky-api/rest.html
+    // Goal 2: Fetch real-time transit data information data from a publicly available API.
     const osn = new OpenSkyNetwork(MIN_BOUND, MAX_BOUND);
-    console.log(await osn.fetchAllStateVectors());
-
-    // TODO: Goal 3: Filter the raw data to a subset with specific criteria.
-    // Sub-goals:
-    // 1.  Limit to flights originating from Canada
-
-    // TODO: Goal 4: Convert the filtered API data into GeoJSON format.
+    const {time, states} = await osn.fetchAllStateVectors();
+    console.log(`Fetched ${states.length} states.`);
 
 
-    // TODO: Goal 5: Plot markers on the map to display the current position of vehicles.
-    // Sub-goals:
-    // 1.  Only selected markers are plotted
-    // 2.  Use custom images of planes
-    // 3.  Plane is facing the correct direction (bearing)
-    // 4.  Clicks show pop-up with flight information
+    // Goal 3: Filter the raw data to a subset with specific criteria.
+    // const canadianOrigin = states.filter(state => state.originCountry === "Canada");
+    const canadianOrigin = states.filter(state => state);
+    console.log(`Reduced to ${canadianOrigin.length} states.`);
+    console.log(canadianOrigin);
+
+    // Goal 4: Convert the filtered API data into GeoJSON format.
+    const geojsonFeatures = canadianOrigin.map(state => {
+        return {
+            "type": "Feature",
+            "properties": state,
+            "geometry": {
+                "type": "Point",
+                "coordinates": [state.longitude, state.latitude]
+            }
+        };
+    });
+    console.debug(geojsonFeatures);
+
+    // Goal 5: Plot markers on the map to display the current position of vehicles.
+
+    function getPlaneInfo(plane) {
+        let output = "";
+        output += `<h4>${plane.callsign || "unknown"}</h4>`;
+        output += "<table><tr><th>Property</th><th>Value</th></tr>";
+        Object.entries(plane).forEach(([key, value]) => {
+            output += `<tr><td>${key}</td><td>${value}</td></tr>`;
+        })
+        output += "</table>";
+        return output;
+    }
+
+    const planeIcon = L.icon({
+        iconUrl: "plane2.png",
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+    })
+
+    L.geoJSON(geojsonFeatures, {
+        pointToLayer: function (feature, latlng) {
+            console.log(feature)
+            console.log(latlng)
+            return L.marker(latlng, {
+                icon: planeIcon,
+                rotationAngle: feature.properties.trueTrack,
+            });
+        },
+        onEachFeature: (feature, layer) => {
+            layer.bindPopup(getPlaneInfo(feature.properties));
+        }
+    }).addTo(map);
 
     // TODO: Goal 6: Add functionality that will cause the map to auto refresh after a certain interval of time.
 
