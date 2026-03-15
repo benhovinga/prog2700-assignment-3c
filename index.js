@@ -3,7 +3,22 @@
  * Main Program
  */
 function main() {
-    const map = L.map('map').setView([51.505, -0.09], 13);
+    const mapElement = document.getElementById('map');
+    const mapOptions = {
+        center: [51.505, -0.09],
+        zoom: 13,
+        attributionControl: false,
+        zoomControl: false,
+        closePopupOnClick: false,
+        boxZoom: false,
+        doubleClickZoom: false,
+        dragging: false,
+        scrollWheelZoom: false,
+        keyboard: false,
+        touchZoom: false,
+    };
+    const map = L.map(mapElement, mapOptions);
+
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -31,12 +46,12 @@ function main() {
     const popup = L.popup()
 
 
-    map.on('click', (e) => {
-        popup
-            .setLatLng(e.latlng)
-            .setContent("You clicked the map at " + e.latlng.toString())
-            .openOn(map);
-    });
+    // map.on('click', (e) => {
+    //     popup
+    //         .setLatLng(e.latlng)
+    //         .setContent("You clicked the map at " + e.latlng.toString())
+    //         .openOn(map);
+    // });
 }
 
 // Start the main program when the DOM is ready
